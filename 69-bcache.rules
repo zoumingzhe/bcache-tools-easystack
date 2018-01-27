@@ -18,15 +18,15 @@ ENV{ID_FS_TYPE}!="bcache", GOTO="bcache_backing_end"
 ENV{ID_FS_UUID_ENC}=="?*", SYMLINK+="disk/by-uuid/$env{ID_FS_UUID_ENC}"
 
 LABEL="bcache_backing_found"
-RUN{builtin}+="kmod load bcache"
+RUN{builtin}+="kmod load escache"
 RUN+="bcache-register $tempnode"
 LABEL="bcache_backing_end"
 
 # Cached devices: symlink
-DRIVER=="bcache", ENV{CACHED_UUID}=="?*", \
-        SYMLINK+="bcache/by-uuid/$env{CACHED_UUID}"
-DRIVER=="bcache", ENV{CACHED_LABEL}=="?*", \
-        SYMLINK+="bcache/by-label/$env{CACHED_LABEL}"
+DRIVER=="escache", ENV{CACHED_UUID}=="?*", \
+        SYMLINK+="escache/by-uuid/$env{CACHED_UUID}"
+DRIVER=="escache", ENV{CACHED_LABEL}=="?*", \
+        SYMLINK+="escache/by-label/$env{CACHED_LABEL}"
 
 LABEL="bcache_end"
 
