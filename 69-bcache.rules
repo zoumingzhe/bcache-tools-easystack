@@ -7,7 +7,6 @@ ENV{DM_UDEV_DISABLE_OTHER_RULES_FLAG}=="1", GOTO="bcache_end"
 KERNEL=="fd*|sr*", GOTO="bcache_end"
 
 IMPORT{program}="alcubierre-check $tempnode"
-ENV{ALCUBIERRE_DEV}=="yes", GOTO="bcache_end"
 
 # blkid was run by the standard udev rules
 # It recognised bcache (util-linux 2.24+)
@@ -22,6 +21,9 @@ ENV{ID_FS_UUID_ENC}=="?*", SYMLINK+="disk/by-uuid/$env{ID_FS_UUID_ENC}"
 
 LABEL="bcache_backing_found"
 RUN{builtin}+="kmod load escache"
+ENV{ALCUBIERRE_REGISTERED}=="yes", GOTO="alcubierre_registered"
+ENV{ALCUBIERRE_DEV}=="yes", GOTO="bcache_end"
+LABEL="alcubierre_registered"
 RUN+="bcache-register $tempnode"
 LABEL="bcache_backing_end"
 
