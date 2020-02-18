@@ -153,6 +153,7 @@ void usage()
 	       "	-w, --block		block size (hard sector size of SSD, often 2k)\n"
 	       "	-o, --data-offset	data offset in sectors\n"
 	       "	    --cset-uuid		UUID for the cache set\n"
+	       "	    --bdev-uuid		UUID for the bdev\n"
 //	       "	-U			UUID\n"
 	       "	    --writeback		enable writeback\n"
 	       "	    --discard		enable discards\n"
@@ -172,7 +173,7 @@ static void write_sb(char *dev, unsigned block_size, unsigned bucket_size,
 		     bool writeback, bool discard, bool wipe_bcache,
 		     unsigned cache_replacement_policy,
 		     uint64_t data_offset,
-		     uuid_t set_uuid, bool bdev, bool alcubierre_dev)
+		     uuid_t set_uuid, bool bdev, bool alcubierre_dev, uuid_t bdev_uuid, bool dirty)
 {
 	int fd;
 	char uuid_str[40], set_uuid_str[40], zeroes[SB_START] = {0};
@@ -215,7 +216,7 @@ static void write_sb(char *dev, unsigned block_size, unsigned bucket_size,
 		: BCACHE_SB_VERSION_CDEV;
 
 	memcpy(sb.magic, bcache_magic, 16);
-	uuid_generate(sb.uuid);
+	memcpy(sb.uuid, bdev_uuid, sizeof(sb.uuid));
 	memcpy(sb.set_uuid, set_uuid, sizeof(sb.set_uuid));
 
 	sb.bucket_size	= bucket_size;
@@ -225,6 +226,8 @@ static void write_sb(char *dev, unsigned block_size, unsigned bucket_size,
 	uuid_unparse(sb.set_uuid, set_uuid_str);
 
 	if (SB_IS_BDEV(&sb)) {
+		if (dirty)
+			SET_BDEV_STATE(&sb, BDEV_STATE_DIRTY);
 		SET_BDEV_CACHE_MODE(
 			&sb, writeback ? CACHE_MODE_WRITEBACK : CACHE_MODE_WRITETHROUGH);
 
@@ -346,6 +349,7 @@ static unsigned get_blocksize(const char *path)
 int main(int argc, char **argv)
 {
 	bool alcubierre_dev = false;
+	bool dirty = false;
 	int c, bdev = -1;
 	unsigned i, ncache_devices = 0, nbacking_devices = 0;
 	char *cache_devices[argc];
@@ -356,8 +360,10 @@ int main(int argc, char **argv)
 	unsigned cache_replacement_policy = 0;
 	uint64_t data_offset = BDEV_DATA_START_DEFAULT;
 	uuid_t set_uuid;
+	uuid_t bdev_uuid;
 
 	uuid_generate(set_uuid);
+	uuid_generate(bdev_uuid);
 
 	struct option opts[] = {
 		{ "alcubierre",		0, NULL,	'A' },
@@ -373,6 +379,7 @@ int main(int argc, char **argv)
 		{ "data_offset",	1, NULL,	'o' },
 		{ "data-offset",	1, NULL,	'o' },
 		{ "cset-uuid",		1, NULL,	'u' },
+		{ "bdev-uuid",		1, NULL,	'v' },
 		{ "help",		0, NULL,	'h' },
 		{ NULL,			0, NULL,	0 },
 	};
@@ -422,6 +429,17 @@ int main(int argc, char **argv)
 				exit(EXIT_FAILURE);
 			}
 			break;
+		/*
+		 * bdev_uuid: the faked backing uuid
+		 * dirty: once fake backing attach to cache writeback resume
+		 */
+		case 'v':
+			if (uuid_parse(optarg, bdev_uuid)) {
+				fprintf(stderr, "Bad uuid\n");
+				exit(EXIT_FAILURE);
+			}
+			dirty = true;
+			break;
 		case 'h':
 			usage();
 			break;
@@ -462,13 +480,13 @@ int main(int argc, char **argv)
 		write_sb(cache_devices[i], block_size, bucket_size,
 			 writeback, discard, wipe_bcache,
 			 cache_replacement_policy,
-			 data_offset, set_uuid, false, alcubierre_dev);
+			 data_offset, set_uuid, false, alcubierre_dev, bdev_uuid, dirty);
 
 	for (i = 0; i < nbacking_devices; i++)
 		write_sb(backing_devices[i], block_size, bucket_size,
 			 writeback, discard, wipe_bcache,
 			 cache_replacement_policy,
-			 data_offset, set_uuid, true, alcubierre_dev);
+			 data_offset, set_uuid, true, alcubierre_dev, bdev_uuid, dirty);
 
 	return 0;
 }
