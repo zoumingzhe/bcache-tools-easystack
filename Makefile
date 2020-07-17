@@ -5,11 +5,11 @@ DRACUTLIBDIR=/lib/dracut
 INSTALL=install
 CFLAGS+=-O2 -Wall -g
 
-all: make-bcache alcubierre-check probe-bcache bcache-super-show bcache-register
+all: make-bcache bcache-check probe-bcache bcache-super-show bcache-register
 
-install: make-bcache alcubierre-check probe-bcache bcache-super-show
+install: make-bcache bcache-check probe-bcache bcache-super-show
 	$(INSTALL) -m0755 make-bcache bcache-super-show	$(DESTDIR)${PREFIX}/sbin/
-	$(INSTALL) -m0755 alcubierre-check probe-bcache bcache-register		$(DESTDIR)$(UDEVLIBDIR)/
+	$(INSTALL) -m0755 bcache-check probe-bcache bcache-register		$(DESTDIR)$(UDEVLIBDIR)/
 	$(INSTALL) -m0644 69-bcache.rules	$(DESTDIR)$(UDEVLIBDIR)/rules.d/
 	$(INSTALL) -m0644 -- *.8 $(DESTDIR)${PREFIX}/share/man/man8/
 	$(INSTALL) -D -m0755 initramfs/hook	$(DESTDIR)/usr/share/initramfs-tools/hooks/bcache
@@ -18,7 +18,7 @@ install: make-bcache alcubierre-check probe-bcache bcache-super-show
 #	$(INSTALL) -m0755 bcache-test $(DESTDIR)${PREFIX}/sbin/
 
 clean:
-	$(RM) -f make-bcache alcubierre-check probe-bcache bcache-super-show bcache-test -- *.o
+	$(RM) -f make-bcache bcache-check probe-bcache bcache-super-show bcache-test -- *.o
 
 bcache-test: LDLIBS += `pkg-config --libs openssl` -lm
 make-bcache: LDLIBS += `pkg-config --libs uuid blkid`

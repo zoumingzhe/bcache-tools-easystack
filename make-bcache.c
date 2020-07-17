@@ -34,6 +34,9 @@
 	(void) (&_max1 == &_max2);		\
 	_max1 > _max2 ? _max1 : _max2; })
 
+static bool alcubierre_dev = false;
+static bool skip_udev_register = false;
+
 uint64_t getblocks(int fd)
 {
 	uint64_t ret;
@@ -147,6 +150,7 @@ void usage()
 	fprintf(stderr,
 		   "Usage: make-bcache [options] device\n"
 	       "	-A, --alcubierre	Format a alcubierre device\n"
+	       "        -S, --skip-udev-register	Format a skip udev register device\n"
 	       "	-C, --cache		Format a cache device\n"
 	       "	-B, --bdev		Format a backing device\n"
 	       "	-b, --bucket		bucket size\n"
@@ -173,7 +177,7 @@ static void write_sb(char *dev, unsigned block_size, unsigned bucket_size,
 		     bool writeback, bool discard, bool wipe_bcache,
 		     unsigned cache_replacement_policy,
 		     uint64_t data_offset,
-		     uuid_t set_uuid, bool bdev, bool alcubierre_dev, uuid_t bdev_uuid, bool dirty)
+		     uuid_t set_uuid, bool bdev, uuid_t bdev_uuid, bool dirty)
 {
 	int fd;
 	char uuid_str[40], set_uuid_str[40], zeroes[SB_START] = {0};
@@ -291,6 +295,12 @@ static void write_sb(char *dev, unsigned block_size, unsigned bucket_size,
 			perror("write error\n");
 			exit(EXIT_FAILURE);
 		}
+	} else if (skip_udev_register) {
+		/* Write a specific string if it's an skipudev device */
+		if (pwrite(fd, "##skipudev", 10, 0) != 10) {
+			perror("write error\n");
+			exit(EXIT_FAILURE);
+		}
 	}
 	/* Write superblock */
 	if (pwrite(fd, &sb, sizeof(sb), SB_START) != sizeof(sb)) {
@@ -348,7 +358,6 @@ static unsigned get_blocksize(const char *path)
 
 int main(int argc, char **argv)
 {
-	bool alcubierre_dev = false;
 	bool dirty = false;
 	int c, bdev = -1;
 	unsigned i, ncache_devices = 0, nbacking_devices = 0;
@@ -366,7 +375,8 @@ int main(int argc, char **argv)
 	uuid_generate(bdev_uuid);
 
 	struct option opts[] = {
-		{ "alcubierre",		0, NULL,	'A' },
+		{ "alcubierre",         0, NULL,        'A' },
+		{ "skip-udev-register",	0, NULL,	'S' },
 		{ "cache",		0, NULL,	'C' },
 		{ "bdev",		0, NULL,	'B' },
 		{ "bucket",		1, NULL,	'b' },
@@ -385,11 +395,13 @@ int main(int argc, char **argv)
 	};
 
 	while ((c = getopt_long(argc, argv,
-				"-hACBUo:w:b:",
+				"-hASCBUo:w:b:",
 				opts, NULL)) != -1)
 		switch (c) {
 		case 'A':
 			alcubierre_dev = true;
+		case 'S':
+			skip_udev_register = true;
 			break;
 		case 'C':
 			bdev = 0;
@@ -480,13 +492,13 @@ int main(int argc, char **argv)
 		write_sb(cache_devices[i], block_size, bucket_size,
 			 writeback, discard, wipe_bcache,
 			 cache_replacement_policy,
-			 data_offset, set_uuid, false, alcubierre_dev, bdev_uuid, dirty);
+			 data_offset, set_uuid, false, bdev_uuid, dirty);
 
 	for (i = 0; i < nbacking_devices; i++)
 		write_sb(backing_devices[i], block_size, bucket_size,
 			 writeback, discard, wipe_bcache,
 			 cache_replacement_policy,
-			 data_offset, set_uuid, true, alcubierre_dev, bdev_uuid, dirty);
+			 data_offset, set_uuid, true, bdev_uuid, dirty);
 
 	return 0;
 }
