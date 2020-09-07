@@ -6,8 +6,6 @@ ACTION=="remove", GOTO="bcache_end"
 ENV{DM_UDEV_DISABLE_OTHER_RULES_FLAG}=="1", GOTO="bcache_end"
 KERNEL=="fd*|sr*", GOTO="bcache_end"
 
-IMPORT{program}="bcache-check $tempnode"
-
 # blkid was run by the standard udev rules
 # It recognised bcache (util-linux 2.24+)
 ENV{ID_FS_TYPE}=="bcache", GOTO="bcache_backing_found"
@@ -20,6 +18,9 @@ ENV{ID_FS_TYPE}!="bcache", GOTO="bcache_backing_end"
 ENV{ID_FS_UUID_ENC}=="?*", SYMLINK+="disk/by-uuid/$env{ID_FS_UUID_ENC}"
 
 LABEL="bcache_backing_found"
+
+IMPORT{program}="bcache-check $tempnode"
+
 RUN{builtin}+="kmod load escache"
 ENV{DISK_REGISTERED}=="yes", GOTO="bcache_end"
 ENV{SKIPREGISTER_DEV}=="yes", GOTO="bcache_backing_end"
