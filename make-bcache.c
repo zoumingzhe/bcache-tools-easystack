@@ -146,6 +146,7 @@ void usage()
 {
 	fprintf(stderr,
 		   "Usage: make-bcache [options] device\n"
+	       "	-A, --alcubierre	Format a alcubierre device\n"
 	       "	-C, --cache		Format a cache device\n"
 	       "	-B, --bdev		Format a backing device\n"
 	       "	-b, --bucket		bucket size\n"
@@ -171,7 +172,7 @@ static void write_sb(char *dev, unsigned block_size, unsigned bucket_size,
 		     bool writeback, bool discard, bool wipe_bcache,
 		     unsigned cache_replacement_policy,
 		     uint64_t data_offset,
-		     uuid_t set_uuid, bool bdev)
+		     uuid_t set_uuid, bool bdev, bool alcubierre_dev)
 {
 	int fd;
 	char uuid_str[40], set_uuid_str[40], zeroes[SB_START] = {0};
@@ -281,6 +282,13 @@ static void write_sb(char *dev, unsigned block_size, unsigned bucket_size,
 		perror("write error\n");
 		exit(EXIT_FAILURE);
 	}
+	if(alcubierre_dev) {
+		/* Write a specific string if it's an alcubierre device */
+		if (pwrite(fd, "alcubierre", 10, 0) != 10) {
+			perror("write error\n");
+			exit(EXIT_FAILURE);
+		}
+	}
 	/* Write superblock */
 	if (pwrite(fd, &sb, sizeof(sb), SB_START) != sizeof(sb)) {
 		perror("write error\n");
@@ -337,6 +345,7 @@ static unsigned get_blocksize(const char *path)
 
 int main(int argc, char **argv)
 {
+	bool alcubierre_dev = false;
 	int c, bdev = -1;
 	unsigned i, ncache_devices = 0, nbacking_devices = 0;
 	char *cache_devices[argc];
@@ -351,6 +360,7 @@ int main(int argc, char **argv)
 	uuid_generate(set_uuid);
 
 	struct option opts[] = {
+		{ "alcubierre",		0, NULL,	'A' },
 		{ "cache",		0, NULL,	'C' },
 		{ "bdev",		0, NULL,	'B' },
 		{ "bucket",		1, NULL,	'b' },
@@ -368,9 +378,12 @@ int main(int argc, char **argv)
 	};
 
 	while ((c = getopt_long(argc, argv,
-				"-hCBUo:w:b:",
+				"-hACBUo:w:b:",
 				opts, NULL)) != -1)
 		switch (c) {
+		case 'A':
+			alcubierre_dev = true;
+			break;
 		case 'C':
 			bdev = 0;
 			break;
@@ -449,13 +462,13 @@ int main(int argc, char **argv)
 		write_sb(cache_devices[i], block_size, bucket_size,
 			 writeback, discard, wipe_bcache,
 			 cache_replacement_policy,
-			 data_offset, set_uuid, false);
+			 data_offset, set_uuid, false, alcubierre_dev);
 
 	for (i = 0; i < nbacking_devices; i++)
 		write_sb(backing_devices[i], block_size, bucket_size,
 			 writeback, discard, wipe_bcache,
 			 cache_replacement_policy,
-			 data_offset, set_uuid, true);
+			 data_offset, set_uuid, true, alcubierre_dev);
 
 	return 0;
 }
