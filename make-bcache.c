@@ -148,21 +148,22 @@ ssize_t read_string_list(const char *buf, const char * const list[])
 void usage()
 {
 	fprintf(stderr,
-		   "Usage: make-bcache [options] device\n"
-	       "	-A, --alcubierre	Format a alcubierre device\n"
-	       "        -S, --skip-udev-register	Format a skip udev register device\n"
-	       "	-C, --cache		Format a cache device\n"
-	       "	-B, --bdev		Format a backing device\n"
-	       "	-b, --bucket		bucket size\n"
-	       "	-w, --block		block size (hard sector size of SSD, often 2k)\n"
-	       "	-o, --data-offset	data offset in sectors\n"
-	       "	    --cset-uuid		UUID for the cache set\n"
-	       "	    --bdev-uuid		UUID for the bdev\n"
-//	       "	-U			UUID\n"
-	       "	    --writeback		enable writeback\n"
-	       "	    --discard		enable discards\n"
-	       "	    --cache_replacement_policy=(lru|fifo)\n"
-	       "	-h, --help		display this help and exit\n");
+		"Usage: make-bcache [options] device\n"
+		"    -A, --alcubierre           Format a alcubierre device\n"
+		"    -S, --skip-udev-register   Format a skip udev register device\n"
+		"    -C, --cache                Format a cache device\n"
+		"    -B, --bdev                 Format a backing device\n"
+		"    -b, --bucket               bucket size\n"
+		"    -w, --block                block size (hard sector size of SSD, often 2k)\n"
+		"    -o, --data-offset          data offset in sectors\n"
+		"    -u, --cset-uuid            UUID for the cache set\n"
+		"    -v, --bdev-uuid            UUID for the bdev\n"
+//		"    -U                         UUID\n"
+		"        --writeback            enable writeback\n"
+		"        --discard              enable discards\n"
+		"        --cache_replacement_policy=(lru|fifo)\n"
+		"    -s, --sb-num               super block number\n"
+		"    -h, --help                 display this help and exit\n");
 	exit(EXIT_FAILURE);
 }
 
@@ -177,7 +178,9 @@ static void write_sb(char *dev, unsigned block_size, unsigned bucket_size,
 		     bool writeback, bool discard, bool wipe_bcache,
 		     unsigned cache_replacement_policy,
 		     uint64_t data_offset,
-		     uuid_t set_uuid, bool bdev, uuid_t bdev_uuid, bool dirty)
+		     uuid_t set_uuid, bool bdev,
+		     uuid_t bdev_uuid, bool dirty,
+		     int sb_num)
 {
 	int fd;
 	char uuid_str[40], set_uuid_str[40], zeroes[SB_START] = {0};
@@ -238,6 +241,12 @@ static void write_sb(char *dev, unsigned block_size, unsigned bucket_size,
 		if (data_offset != BDEV_DATA_START_DEFAULT) {
 			sb.version = BCACHE_SB_VERSION_BDEV_WITH_OFFSET;
 			sb.data_offset = data_offset;
+		}
+
+		if (sb.data_offset < BDEV_DATA_START_DEFAULT + sb_num * SB_SECTOR) {
+			printf("data_offset should be larger than %u.\n",
+					BDEV_DATA_START_DEFAULT + sb_num * SB_SECTOR);
+			exit(EXIT_FAILURE);
 		}
 
 		printf("UUID:			%s\n"
@@ -308,6 +317,34 @@ static void write_sb(char *dev, unsigned block_size, unsigned bucket_size,
 		exit(EXIT_FAILURE);
 	}
 
+	if (SB_IS_BDEV(&sb)) {
+		int i = 0;
+
+		for(i = 1; i < sb_num; i++) {
+			sb.offset	= SB_SECTOR;
+			uuid_generate(sb.uuid);
+			uuid_unparse(sb.uuid, uuid_str);
+			uuid_generate(sb.set_uuid);
+			uuid_unparse(sb.set_uuid, set_uuid_str);
+			sb.csum = csum_set(&sb);
+
+			printf("secondary UUID:		%s\n"
+			       "Set UUID:		%s\n"
+			       "version:		%u\n"
+			       "block_size:		%u\n"
+			       "data_offset:		%ju\n",
+			       uuid_str, set_uuid_str,
+			       (unsigned) sb.version,
+			       sb.block_size,
+			       data_offset);
+			/* Write secondary superblock */
+			if (pwrite(fd, &sb, sizeof(sb), SB_OFFSET(i)) != sizeof(sb)) {
+				perror("write error\n");
+				exit(EXIT_FAILURE);
+			}
+		}
+	}
+
 	fsync(fd);
 	close(fd);
 }
@@ -367,9 +404,10 @@ int main(int argc, char **argv)
 	unsigned block_size = 0, bucket_size = 1024;
 	int writeback = 0, discard = 0, wipe_bcache = 0;
 	unsigned cache_replacement_policy = 0;
-	uint64_t data_offset = BDEV_DATA_START_DEFAULT;
+	uint64_t data_offset = -1;
 	uuid_t set_uuid;
 	uuid_t bdev_uuid;
+	int sb_num = 1;
 
 	uuid_generate(set_uuid);
 	uuid_generate(bdev_uuid);
@@ -390,12 +428,13 @@ int main(int argc, char **argv)
 		{ "data-offset",	1, NULL,	'o' },
 		{ "cset-uuid",		1, NULL,	'u' },
 		{ "bdev-uuid",		1, NULL,	'v' },
+		{ "sb-num",		1, NULL,	's' },
 		{ "help",		0, NULL,	'h' },
 		{ NULL,			0, NULL,	0 },
 	};
 
 	while ((c = getopt_long(argc, argv,
-				"-hASCBUo:w:b:",
+				"-hASCBUo:w:b:u:v:s:",
 				opts, NULL)) != -1)
 		switch (c) {
 		case 'A':
@@ -429,11 +468,6 @@ int main(int argc, char **argv)
 			break;
 		case 'o':
 			data_offset = atoll(optarg);
-			if (data_offset < BDEV_DATA_START_DEFAULT) {
-				fprintf(stderr, "Bad data offset; minimum %d sectors\n",
-				       BDEV_DATA_START_DEFAULT);
-				exit(EXIT_FAILURE);
-			}
 			break;
 		case 'u':
 			if (uuid_parse(optarg, set_uuid)) {
@@ -451,6 +485,14 @@ int main(int argc, char **argv)
 				exit(EXIT_FAILURE);
 			}
 			dirty = true;
+			break;
+		case 's':
+			sb_num = atoi(optarg);
+			if (sb_num > BDEV_SB_NUM_MAX) {
+				fprintf(stderr, "Bad sb-num, maximum sb-num: %d\n",
+					BDEV_SB_NUM_MAX);
+				exit(EXIT_FAILURE);
+			}
 			break;
 		case 'h':
 			usage();
@@ -473,11 +515,6 @@ int main(int argc, char **argv)
 		usage();
 	}
 
-	if (bucket_size < block_size) {
-		fprintf(stderr, "Bucket size cannot be smaller than block size\n");
-		exit(EXIT_FAILURE);
-	}
-
 	if (!block_size) {
 		for (i = 0; i < ncache_devices; i++)
 			block_size = max(block_size,
@@ -488,17 +525,36 @@ int main(int argc, char **argv)
 					 get_blocksize(backing_devices[i]));
 	}
 
+	if (bucket_size < block_size) {
+		fprintf(stderr, "Bucket size cannot be smaller than block size\n");
+		exit(EXIT_FAILURE);
+	}
+
+	/*
+	 * If the -o option is not specified, calculate the data_offset.
+	 * If the -o option is specified, check the data_offset.
+	 */
+	if (data_offset == -1) {
+		data_offset = BDEV_DATA_OFFSET(sb_num);
+	} else if (data_offset < BDEV_DATA_OFFSET(sb_num)) {
+		fprintf(stderr, "Bad data offset; minimum %d sectors\n",
+			BDEV_DATA_OFFSET(sb_num));
+		exit(EXIT_FAILURE);
+	}
+
 	for (i = 0; i < ncache_devices; i++)
 		write_sb(cache_devices[i], block_size, bucket_size,
 			 writeback, discard, wipe_bcache,
 			 cache_replacement_policy,
-			 data_offset, set_uuid, false, bdev_uuid, dirty);
+			 data_offset, set_uuid, false,
+			 bdev_uuid, dirty, 1);
 
 	for (i = 0; i < nbacking_devices; i++)
 		write_sb(backing_devices[i], block_size, bucket_size,
 			 writeback, discard, wipe_bcache,
 			 cache_replacement_policy,
-			 data_offset, set_uuid, true, bdev_uuid, dirty);
+			 data_offset, set_uuid, true,
+			 bdev_uuid, dirty, sb_num);
 
 	return 0;
 }
