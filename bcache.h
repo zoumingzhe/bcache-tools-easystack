@@ -37,8 +37,12 @@ static const char bcache_magic[] = {
 #define SB_SECTOR		8
 #define SB_LABEL_SIZE		32
 #define SB_JOURNAL_BUCKETS	256U
+#define BDEV_SB_NUM_MAX		4
 #define BDEV_DATA_START_DEFAULT	16	/* sectors */
+#define BDEV_DATA_OFFSET(n)	(BDEV_DATA_START_DEFAULT + SB_SECTOR * (n))
+#define SB_SIZE			(SB_SECTOR * 512)
 #define SB_START		(SB_SECTOR * 512)
+#define SB_OFFSET(n)		(SB_START + SB_SIZE * (n))
 
 struct cache_sb {
 	uint64_t		csum;
