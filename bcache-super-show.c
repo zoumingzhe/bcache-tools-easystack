@@ -29,7 +29,7 @@
 
 static void usage()
 {
-	fprintf(stderr, "Usage: bcache-super-show [-f] <device>\n");
+	fprintf(stderr, "Usage: bcache-super-show [-f] <device> [-i <index>]\n");
 }
 
 
@@ -64,11 +64,16 @@ int main(int argc, char **argv)
 	struct cache_sb sb;
 	char uuid[40];
 	uint64_t expected_csum;
+	int sb_idx = 0;
 
-	while ((o = getopt(argc, argv, "f")) != EOF)
+	while ((o = getopt(argc, argv, "fi:")) != EOF)
 		switch (o) {
 			case 'f':
 				force_csum = 1;
+				break;
+
+			case 'i':
+				sb_idx = atoi(optarg);
 				break;
 
 			default:
@@ -90,7 +95,7 @@ int main(int argc, char **argv)
 		exit(2);
 	}
 
-	if (pread(fd, &sb, sizeof(sb), SB_START) != sizeof(sb)) {
+	if (pread(fd, &sb, sizeof(sb), SB_OFFSET(sb_idx)) != sizeof(sb)) {
 		fprintf(stderr, "Couldn't read\n");
 		exit(2);
 	}
