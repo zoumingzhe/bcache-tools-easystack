@@ -5,3 +5,4 @@
 /probe-bcache
 .*
 /*.o
+*.patch
