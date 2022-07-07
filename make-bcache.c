@@ -28,6 +28,12 @@
 
 #include "bcache.h"
 
+#define min(x, y) ({				\
+	typeof(x) _min1 = (x);			\
+	typeof(y) _min2 = (y);			\
+	(void) (&_min1 == &_min2);		\
+	_min1 < _min2 ? _min1 : _min2; })
+
 #define max(x, y) ({				\
 	typeof(x) _max1 = (x);			\
 	typeof(y) _max2 = (y);			\
@@ -285,6 +291,25 @@ static void write_sb(char *dev, unsigned block_size, unsigned bucket_size,
 	if (pwrite(fd, &sb, sizeof(sb), SB_START) != sizeof(sb)) {
 		perror("write error\n");
 		exit(EXIT_FAILURE);
+	}
+
+	if (!SB_IS_BDEV(&sb)) {
+		int i, end = min(sb.nbuckets, (uint64_t)sb.first_bucket
+						+ SB_JOURNAL_BUCKETS);
+
+		/* Zero cache device journal */
+		for(i = sb.first_bucket; i < end; i++) {
+			uint64_t offset = bucket_to_offset(&sb, i);
+			uint64_t len, end = bucket_to_offset(&sb, i + 1);
+			while (offset < end) {
+				len = min(end - offset, (uint64_t)SB_START);
+				if (pwrite(fd, zeroes, len, offset) != len) {
+					perror("write error\n");
+					exit(EXIT_FAILURE);
+				}
+				offset += len;
+			}
+		}
 	}
 
 	fsync(fd);

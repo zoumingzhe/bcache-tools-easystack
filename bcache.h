@@ -97,6 +97,11 @@ static inline bool SB_IS_BDEV(const struct cache_sb *sb)
 		|| sb->version == BCACHE_SB_VERSION_BDEV_WITH_OFFSET;
 }
 
+static inline uint64_t bucket_to_offset(const struct cache_sb *sb, int b)
+{
+	return b * (uint64_t)sb->bucket_size * 512UL;
+}
+
 BITMASK(CACHE_SYNC,		struct cache_sb, flags, 0, 1);
 BITMASK(CACHE_DISCARD,		struct cache_sb, flags, 1, 1);
 BITMASK(CACHE_REPLACEMENT,	struct cache_sb, flags, 2, 3);
