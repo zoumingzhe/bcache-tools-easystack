@@ -169,6 +169,7 @@ void usage()
 		"        --discard              enable discards\n"
 		"        --cache_replacement_policy=(lru|fifo)\n"
 		"    -s, --sb-num               super block number\n"
+		"    -r, --reset-cset-uuid      reset backing device's cset-uuid\n"
 		"    -h, --help                 display this help and exit\n");
 	exit(EXIT_FAILURE);
 }
@@ -372,6 +373,112 @@ static void write_sb(char *dev, unsigned block_size, unsigned bucket_size,
 	close(fd);
 }
 
+static void reset_backing_sb(char *dev, bool wipe_bcache, int sb_idx,
+			     uuid_t set_uuid, uuid_t bdev_uuid)
+{
+	int fd;
+	char uuid_str[40], set_uuid_str[40];
+	struct cache_sb sb;
+	uint16_t block_size;
+	uint16_t bucket_size;
+	uint64_t data_offset;
+	blkid_probe pr;
+
+	if ((fd = open(dev, O_RDWR|O_EXCL)) == -1) {
+		fprintf(stderr, "Can't open dev %s: %s\n", dev, strerror(errno));
+		exit(EXIT_FAILURE);
+	}
+
+	if (pread(fd, &sb, sizeof(sb), SB_OFFSET(sb_idx)) != sizeof(sb))
+		exit(EXIT_FAILURE);
+
+	if (!memcmp(sb.magic, bcache_magic, 16)) {
+		if (!wipe_bcache) {
+			fprintf(stderr, "Already a bcache device on %s, "
+				"overwrite with --wipe-bcache\n", dev);
+			exit(EXIT_FAILURE);
+		}
+	} else {
+		fprintf(stderr, "Not a bcache device on %s index %d\n", dev, sb_idx);
+		exit(EXIT_FAILURE);
+	}
+
+	if (!(pr = blkid_new_probe()))
+		exit(EXIT_FAILURE);
+	if (blkid_probe_set_device(pr, fd, 0, 0))
+		exit(EXIT_FAILURE);
+	/* enable ptable probing; superblock probing is enabled by default */
+	if (blkid_probe_enable_partitions(pr, true))
+		exit(EXIT_FAILURE);
+	if (!blkid_do_probe(pr)) {
+		/* XXX wipefs doesn't know how to remove partition tables */
+		fprintf(stderr, "Device %s already has a non-bcache superblock, "
+				"remove it using wipefs and wipefs -a\n", dev);
+		exit(EXIT_FAILURE);
+	}
+
+	if (!SB_IS_BDEV(&sb)) {
+		fprintf(stderr, "Device %s not a bcaking device\n", dev);
+		exit(EXIT_FAILURE);
+	}
+	/* save some old parameter */
+	block_size = sb.block_size;
+	bucket_size = sb.bucket_size;
+	data_offset = sb.data_offset;
+	if (!memcmp(sb.uuid, bdev_uuid, min(sizeof(uuid_t), sizeof(sb.uuid)))){
+		fprintf(stderr, "Please specify new bdev-uuid\n");
+		exit(EXIT_FAILURE);
+	}
+	if (!memcmp(sb.set_uuid, set_uuid, min(sizeof(uuid_t), sizeof(sb.set_uuid)))){
+		fprintf(stderr, "Please specify new cset-uuid\n");
+		exit(EXIT_FAILURE);
+	}
+	memset(&sb, 0, sizeof(struct cache_sb));
+
+	sb.offset	= SB_SECTOR;
+	sb.version	= BCACHE_SB_VERSION_BDEV;
+
+	memcpy(sb.magic, bcache_magic, 16);
+	memcpy(sb.uuid, bdev_uuid, sizeof(sb.uuid));
+	memcpy(sb.set_uuid, set_uuid, sizeof(sb.set_uuid));
+
+	sb.bucket_size	= bucket_size;
+	sb.block_size	= block_size;
+
+	uuid_unparse(sb.uuid, uuid_str);
+	uuid_unparse(sb.set_uuid, set_uuid_str);
+
+	if (data_offset != BDEV_DATA_START_DEFAULT) {
+		sb.version = BCACHE_SB_VERSION_BDEV_WITH_OFFSET;
+		sb.data_offset = data_offset;
+	}
+
+	if (sb.data_offset != data_offset) {
+		printf("data_offset must use %u.\n", (unsigned)data_offset);
+		exit(EXIT_FAILURE);
+	}
+
+	printf("UUID:			%s\n"
+		"Set UUID:		%s\n"
+		"version:		%u\n"
+		"block_size:		%u\n"
+		"data_offset:		%ju\n",
+		uuid_str, set_uuid_str,
+		(unsigned) sb.version,
+		sb.block_size,
+		data_offset);
+
+	sb.csum = csum_set(&sb);
+	/* Write superblock */
+	if (pwrite(fd, &sb, sizeof(sb), SB_OFFSET(sb_idx)) != sizeof(sb)) {
+		perror("write error\n");
+		exit(EXIT_FAILURE);
+	}
+
+	fsync(fd);
+	close(fd);
+}
+
 static unsigned get_blocksize(const char *path)
 {
 	struct stat statbuf;
@@ -430,20 +537,21 @@ int main(int argc, char **argv)
 	uint64_t data_offset = -1;
 	uuid_t set_uuid;
 	uuid_t bdev_uuid;
+	int sb_idx = -1;
 	int sb_num = 1;
 
 	uuid_generate(set_uuid);
 	uuid_generate(bdev_uuid);
 
 	struct option opts[] = {
-		{ "alcubierre",         0, NULL,        'A' },
+		{ "alcubierre",		0, NULL,	'A' },
 		{ "skip-udev-register",	0, NULL,	'S' },
 		{ "cache",		0, NULL,	'C' },
 		{ "bdev",		0, NULL,	'B' },
 		{ "bucket",		1, NULL,	'b' },
 		{ "block",		1, NULL,	'w' },
 		{ "writeback",		0, &writeback,	1 },
-		{ "wipe-bcache",	0, &wipe_bcache,	1 },
+		{ "wipe-bcache",	0, &wipe_bcache,1 },
 		{ "discard",		0, &discard,	1 },
 		{ "cache_replacement_policy", 1, NULL, 'p' },
 		{ "cache-replacement-policy", 1, NULL, 'p' },
@@ -452,12 +560,13 @@ int main(int argc, char **argv)
 		{ "cset-uuid",		1, NULL,	'u' },
 		{ "bdev-uuid",		1, NULL,	'v' },
 		{ "sb-num",		1, NULL,	's' },
+		{ "reset-cset-uuid",	1, NULL,	'r' },
 		{ "help",		0, NULL,	'h' },
 		{ NULL,			0, NULL,	0 },
 	};
 
 	while ((c = getopt_long(argc, argv,
-				"-hASCBUo:w:b:u:v:s:",
+				"-hASCBUo:w:b:u:v:s:r:",
 				opts, NULL)) != -1)
 		switch (c) {
 		case 'A':
@@ -517,6 +626,14 @@ int main(int argc, char **argv)
 				exit(EXIT_FAILURE);
 			}
 			break;
+		case 'r':
+			sb_idx = atoi(optarg);
+			if (sb_idx < 0 || sb_idx >= BDEV_SB_NUM_MAX) {
+				fprintf(stderr, "Bad superblock index, maximum index: %d\n",
+					BDEV_SB_NUM_MAX);
+				exit(EXIT_FAILURE);
+			}
+			break;
 		case 'h':
 			usage();
 			break;
@@ -565,6 +682,16 @@ int main(int argc, char **argv)
 		exit(EXIT_FAILURE);
 	}
 
+	if (sb_idx >= 0) {
+		if (nbacking_devices != 1) {
+			fprintf(stderr, "Only one backing device can be reset at a time\n");
+			exit(EXIT_FAILURE);
+		}
+		reset_backing_sb(backing_devices[0], wipe_bcache, sb_idx,
+				 set_uuid, bdev_uuid);
+		goto out;
+	}
+
 	for (i = 0; i < ncache_devices; i++)
 		write_sb(cache_devices[i], block_size, bucket_size,
 			 writeback, discard, wipe_bcache,
@@ -579,5 +706,6 @@ int main(int argc, char **argv)
 			 data_offset, set_uuid, true,
 			 bdev_uuid, dirty, sb_num);
 
+out:
 	return 0;
 }
