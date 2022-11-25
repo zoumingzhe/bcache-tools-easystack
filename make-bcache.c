@@ -382,7 +382,6 @@ static void reset_backing_sb(char *dev, bool wipe_bcache, int sb_idx,
 	uint16_t block_size;
 	uint16_t bucket_size;
 	uint64_t data_offset;
-	blkid_probe pr;
 
 	if ((fd = open(dev, O_RDWR|O_EXCL)) == -1) {
 		fprintf(stderr, "Can't open dev %s: %s\n", dev, strerror(errno));
@@ -400,20 +399,6 @@ static void reset_backing_sb(char *dev, bool wipe_bcache, int sb_idx,
 		}
 	} else {
 		fprintf(stderr, "Not a bcache device on %s index %d\n", dev, sb_idx);
-		exit(EXIT_FAILURE);
-	}
-
-	if (!(pr = blkid_new_probe()))
-		exit(EXIT_FAILURE);
-	if (blkid_probe_set_device(pr, fd, 0, 0))
-		exit(EXIT_FAILURE);
-	/* enable ptable probing; superblock probing is enabled by default */
-	if (blkid_probe_enable_partitions(pr, true))
-		exit(EXIT_FAILURE);
-	if (!blkid_do_probe(pr)) {
-		/* XXX wipefs doesn't know how to remove partition tables */
-		fprintf(stderr, "Device %s already has a non-bcache superblock, "
-				"remove it using wipefs and wipefs -a\n", dev);
 		exit(EXIT_FAILURE);
 	}
 
